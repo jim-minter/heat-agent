@@ -76,7 +76,7 @@ def deploy_signal(metadata, stdout, stderr, returncode):
                       json.dumps({"deploy_stdout": stdout,
                                   "deploy_stderr": stderr,
                                   "deploy_status_code": returncode}),
-                      {"Content-Type": ""})
+                      {"Content-Type": "application/json"})
   urllib2.urlopen(r)
 
 cfn_data = get_cfn_init_data()["os-collect-config"]["cfn"]
