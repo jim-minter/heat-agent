@@ -94,7 +94,7 @@ os.chmod("/tmp/script.sh", 0o755)
 env = dict(os.environ)
 for x in metadata["inputs"]:
   if x["value"] is not None:
-    env[x["name"]] = x["value"]
+    env[x["name"]] = str(x["value"])
 
 p = subprocess.Popen("/tmp/script.sh", stdout = subprocess.PIPE,
                      stderr = subprocess.PIPE, cwd = "/tmp", env = env)
