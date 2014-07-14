@@ -102,3 +102,9 @@ p = subprocess.Popen("/tmp/script.sh", stdout = subprocess.PIPE,
 os.unlink("/tmp/script.sh")
 
 deploy_signal(metadata, stdout, stderr, p.returncode)
+
+with open("/tmp/heat-agent-stdout", "w") as f:
+  f.write(stdout)
+
+with open("/tmp/heat-agent-stderr", "w") as f:
+  f.write(stderr)
