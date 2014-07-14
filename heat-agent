@@ -21,6 +21,7 @@ import hmac
 import json
 import os
 import subprocess
+import sys
 import urllib
 import urllib2
 import urlparse
@@ -79,7 +80,11 @@ def deploy_signal(metadata, stdout, stderr, returncode):
                       {"Content-Type": "application/json"})
   urllib2.urlopen(r)
 
-cfn_data = get_cfn_init_data()["os-collect-config"]["cfn"]
+cfn_data = get_cfn_init_data()
+if cfn_data is None:
+  sys.exit(0)
+
+cfn_data = cfn_data["os-collect-config"]["cfn"]
 metadata = describe_stack_resource(cfn_data)["deployments"][0]
 
 with open("/tmp/script.sh", "w") as f:
@@ -92,7 +97,7 @@ for x in metadata["inputs"]:
     env[x["name"]] = x["value"]
 
 p = subprocess.Popen("/tmp/script.sh", stdout = subprocess.PIPE,
-                     stderr = subprocess.PIPE, env = env)
+                     stderr = subprocess.PIPE, cwd = "/tmp", env = env)
 (stdout, stderr) = p.communicate()
 os.unlink("/tmp/script.sh")
 
