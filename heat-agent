@@ -71,11 +71,11 @@ def describe_stack_resource(cfn_data):
 
   return json.loads(x.find("DescribeStackResourceResult/StackResourceDetail/Metadata").text)
 
-def deploy_signal(metadata, stdout, stderr, returncode):
+def deploy_signal(metadata, output, returncode):
   deploy_signal_id = [x for x in metadata["inputs"] if x["name"] == "deploy_signal_id"][0]["value"]
   r = urllib2.Request(deploy_signal_id,
-                      json.dumps({"deploy_stdout": stdout,
-                                  "deploy_stderr": stderr,
+                      json.dumps({"deploy_stdout": output,
+                                  "deploy_stderr": "",
                                   "deploy_status_code": returncode}),
                       {"Content-Type": "application/json"})
   urllib2.urlopen(r)
@@ -97,14 +97,11 @@ for x in metadata["inputs"]:
     env[x["name"]] = str(x["value"])
 
 p = subprocess.Popen("/tmp/script.sh", stdout = subprocess.PIPE,
-                     stderr = subprocess.PIPE, cwd = "/tmp", env = env)
-(stdout, stderr) = p.communicate()
+                     stderr = subprocess.STDOUT, cwd = "/tmp", env = env)
+(output, _) = p.communicate()
 os.unlink("/tmp/script.sh")
 
-deploy_signal(metadata, stdout, stderr, p.returncode)
+deploy_signal(metadata, output, p.returncode)
 
-with open("/tmp/heat-agent-stdout", "w") as f:
-  f.write(stdout)
-
-with open("/tmp/heat-agent-stderr", "w") as f:
-  f.write(stderr)
+with open("/tmp/heat-agent-output", "w") as f:
+  f.write(output)
