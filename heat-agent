@@ -18,61 +18,57 @@ import base64
 import email.parser
 import hashlib
 import hmac
+import itertools
 import json
 import os
 import subprocess
-import sys
+import time
 import urllib
 import urllib2
 import urlparse
 import xml.etree.ElementTree
 
-def get_cfn_init_data():
+def get_user_data(filename):
   user_data = urllib.urlopen("http://169.254.169.254/latest/user-data")
-  parser = email.parser.Parser()
-  msg = parser.parse(user_data)
+  msg = email.parser.Parser().parse(user_data)
   for part in msg.walk():
-    if part.get_filename() == "cfn-init-data":
-      return json.loads(part.get_payload())
+    if part.get_filename() == filename:
+      return part.get_payload()
 
-def canonical_qs(params):
-  keys = list(params)
-  keys.sort()
-  pairs = []
-  for key in keys:
-    val = params[key].encode("utf-8")
-    val = urllib.quote(val, safe='-_~')
-    pairs.append(urllib.quote(key, safe='') + '=' + val)
-  qs = '&'.join(pairs)
-  return qs
+def canonical_qs(d):
+  l = []
+  for k in sorted(d):
+    v = urllib.quote(d[k].encode("utf-8"), safe = "-_~")
+    l.append(urllib.quote(k, safe = "") + "=" + v)
+  return "&".join(l)
 
-def sign(cfndata, dct):
-  dct.update({ "AWSAccessKeyId": cfndata["access_key_id"],
-               "SignatureVersion": "2",
-               "SignatureMethod": "HmacSHA256" })
+def sign(cfn_config, d):
+  d.update({ "AWSAccessKeyId": cfn_config["access_key_id"],
+             "SignatureVersion": "2",
+             "SignatureMethod": "HmacSHA256" })
 
-  url = urlparse.urlparse(cfndata["metadata_url"])
+  url = urlparse.urlparse(cfn_config["metadata_url"])
 
-  msg = "\n".join(["GET", url.netloc, url.path, canonical_qs(dct)])
-  sig = hmac.new(str(cfndata["secret_access_key"]), msg, hashlib.sha256).digest()
-  dct["Signature"] = base64.b64encode(sig)
+  msg = "\n".join(["GET", url.netloc, url.path, canonical_qs(d)])
+  sig = hmac.new(str(cfn_config["secret_access_key"]), msg, hashlib.sha256).digest()
+  d["Signature"] = base64.b64encode(sig)
 
-  return dct
+  return d
 
-def describe_stack_resource(cfn_data):
-  dct = { "StackName": cfn_data["stack_name"],
-          "Action": "DescribeStackResource",
-          "LogicalResourceId": "server" }
+def describe_stack_resource(cfn_config):
+  d = { "StackName": cfn_config["stack_name"],
+        "Action": "DescribeStackResource",
+        "LogicalResourceId": cfn_config["path"].split(".")[0] }
   
-  dct = sign(cfn_data, dct)
+  d = sign(cfn_config, d)
 
-  r = urllib.urlopen(cfn_data["metadata_url"] + "?" + urllib.urlencode(dct))
+  r = urllib.urlopen(cfn_config["metadata_url"] + "?" + urllib.urlencode(d))
   x = xml.etree.ElementTree.parse(r)
 
   return json.loads(x.find("DescribeStackResourceResult/StackResourceDetail/Metadata").text)
 
-def deploy_signal(metadata, output, returncode):
-  deploy_signal_id = [x for x in metadata["inputs"] if x["name"] == "deploy_signal_id"][0]["value"]
+def deploy_signal(deployment, output, returncode):
+  deploy_signal_id = [x for x in deployment["inputs"] if x["name"] == "deploy_signal_id"][0]["value"]
   r = urllib2.Request(deploy_signal_id,
                       json.dumps({"deploy_stdout": output,
                                   "deploy_stderr": "",
@@ -80,28 +76,41 @@ def deploy_signal(metadata, output, returncode):
                       {"Content-Type": "application/json"})
   urllib2.urlopen(r)
 
-cfn_data = get_cfn_init_data()
-if cfn_data is None:
-  sys.exit(0)
+def main():
+  cfn_init_data = get_user_data("cfn-init-data")
+  if cfn_init_data is None:
+    return
 
-cfn_data = cfn_data["os-collect-config"]["cfn"]
-metadata = describe_stack_resource(cfn_data)["deployments"][0]
+  cfn_config = json.loads(cfn_init_data)["os-collect-config"]["cfn"]
 
-with open("/tmp/script.sh", "w") as f:
-  f.write(metadata["config"])
-os.chmod("/tmp/script.sh", 0o755)
+  for i in itertools.count(0):
+    while True:
+      try:
+        metadata = describe_stack_resource(cfn_config)
+        deployment = metadata["deployments"][i]
+        break
 
-env = dict(os.environ)
-for x in metadata["inputs"]:
-  if x["value"] is not None:
-    env[x["name"]] = str(x["value"])
+      except IndexError:
+        time.sleep(10)
 
-p = subprocess.Popen("/tmp/script.sh", stdout = subprocess.PIPE,
-                     stderr = subprocess.STDOUT, cwd = "/tmp", env = env)
-(output, _) = p.communicate()
-os.unlink("/tmp/script.sh")
+    with open("/tmp/heat-agent-script-%d.sh" % i, "w") as f:
+      f.write(deployment["config"])
+    os.chmod("/tmp/heat-agent-script-%d.sh" % i, 0o755)
 
-deploy_signal(metadata, output, p.returncode)
+    env = dict(os.environ)
+    for x in deployment["inputs"]:
+      if x["value"] is not None:
+        env[x["name"]] = str(x["value"])
 
-with open("/tmp/heat-agent-output", "w") as f:
-  f.write(output)
+    p = subprocess.Popen("/tmp/heat-agent-script-%d.sh" % i,
+                         stdout = subprocess.PIPE, stderr = subprocess.STDOUT,
+                         cwd = "/tmp", env = env)
+    (output, _) = p.communicate()
+
+    with open("/tmp/heat-agent-output-%d" % i, "w") as f:
+      f.write(output)
+
+    deploy_signal(deployment, output, p.returncode)
+
+if __name__ == "__main__":
+  main()
