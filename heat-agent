@@ -85,7 +85,14 @@ def deploy_signal(deployment, output, returncode):
 
 
 def main():
-    cfn_init_data = get_user_data("cfn-init-data")
+    try:
+        cfn_init_data = get_user_data("cfn-init-data")
+    except IOError as e:
+        # http://bugs.python.org/issue6471
+        if e.errno == "socket error" and e.strerror.errno == 110:
+            return
+        raise
+
     if cfn_init_data is None:
         return
 
