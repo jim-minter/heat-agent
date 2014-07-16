@@ -132,6 +132,7 @@ def main():
                 f.flush()
                 output += data
 
+        p.wait()
         deploy_signal(deployment, output, p.returncode)
 
 
