@@ -113,10 +113,17 @@ def main():
         p = subprocess.Popen("/tmp/heat-agent-script-%d.sh" % i,
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                              cwd="/tmp", env=env)
-        (output, _) = p.communicate()
 
-        with open("/tmp/heat-agent-output-%d" % i, "w") as f:
-            f.write(output)
+        output = ""
+        with open("/tmp/heat-agent-output-%d.log" % i, "w") as f:
+            while True:
+                data = p.stdout.read(4096)
+                if data == "":
+                    break
+
+                f.write(data)
+                f.flush()
+                output += data
 
         deploy_signal(deployment, output, p.returncode)
 
