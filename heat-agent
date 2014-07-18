@@ -91,50 +91,54 @@ def main():
         # http://bugs.python.org/issue6471
         if e.errno == "socket error" and e.strerror.errno == 110:
             return
-        raise
+        else:
+            raise
 
     if cfn_init_data is None:
         return
 
     cfn_config = json.loads(cfn_init_data)["os-collect-config"]["cfn"]
+    completed = set()
 
-    for i in itertools.count(0):
-        while True:
-            try:
-                metadata = describe_stack_resource(cfn_config)
-                deployment = metadata["deployments"][i]
-                break
+    while True:
+        metadata = describe_stack_resource(cfn_config)
 
-            except IndexError:
-                time.sleep(10)
+        for deployment in metadata["deployments"]:
+            if deployment["id"] in completed:
+                continue
 
-        with open("/tmp/heat-agent-script-%d.sh" % i, "w") as f:
-            f.write(deployment["config"])
-        os.chmod("/tmp/heat-agent-script-%d.sh" % i, 0o755)
+            i = len(completed)
 
-        env = dict(os.environ)
-        for x in deployment["inputs"]:
-            if x["value"] is not None:
-                env[x["name"]] = str(x["value"])
+            with open("/tmp/heat-agent-script-%d.sh" % i, "w") as f:
+                f.write(deployment["config"])
+            os.chmod("/tmp/heat-agent-script-%d.sh" % i, 0o755)
 
-        p = subprocess.Popen("/tmp/heat-agent-script-%d.sh" % i,
-                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                             cwd="/tmp", env=env)
+            env = dict(os.environ)
+            for x in deployment["inputs"]:
+                if x["value"] is not None:
+                    env[x["name"]] = str(x["value"])
 
-        output = ""
-        with open("/tmp/heat-agent-output-%d.log" % i, "w") as f:
-            while True:
-                data = p.stdout.read(4096)
-                if data == "":
-                    break
+            p = subprocess.Popen("/tmp/heat-agent-script-%d.sh" % i,
+                                 stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT, cwd="/tmp", env=env)
 
-                f.write(data)
-                f.flush()
-                output += data
+            output = ""
+            with open("/tmp/heat-agent-output-%d.log" % i, "w") as f:
+                while True:
+                    data = p.stdout.read(4096)
+                    if data == "":
+                        break
 
-        p.wait()
-        deploy_signal(deployment, output, p.returncode)
+                    f.write(data)
+                    f.flush()
+                    output += data
 
+            p.wait()
+            deploy_signal(deployment, output, p.returncode)
+
+            completed.add(deployment["id"])
+
+        time.sleep(10)
 
 if __name__ == "__main__":
     main()
