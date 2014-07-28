@@ -110,7 +110,7 @@ def main():
             i = len(completed)
 
             with open("/tmp/heat-agent-script-%d.sh" % i, "w") as f:
-                f.write(deployment["config"])
+                f.write(deployment["config"].encode("utf-8"))
             os.chmod("/tmp/heat-agent-script-%d.sh" % i, 0o755)
 
             env = dict(os.environ)
