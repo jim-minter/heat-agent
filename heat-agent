@@ -21,7 +21,9 @@ import hmac
 import itertools
 import json
 import os
+import StringIO
 import subprocess
+import tarfile
 import time
 import urllib
 import urllib2
@@ -84,6 +86,24 @@ def deploy_signal(deployment, output, returncode):
     urllib2.urlopen(r)
 
 
+def run_script(deployment, script, stdout, cwd):
+    env = dict(os.environ)
+    for x in deployment["inputs"]:
+        if x["value"] is None:
+            if x["name"] in env:
+                del env[x["name"]]
+        else:
+            env[x["name"]] = str(x["value"])
+
+    rv = subprocess.call([script], stdout=open(stdout, "w"),
+                         stderr=subprocess.STDOUT, cwd=cwd, env=env)
+
+    with open(stdout, "r") as f:
+        output = f.read()
+
+    deploy_signal(deployment, output, rv)
+
+
 def main():
     try:
         cfn_init_data = get_user_data("cfn-init-data")
@@ -109,32 +129,23 @@ def main():
 
             i = len(completed)
 
-            with open("/tmp/heat-agent-script-%d.sh" % i, "w") as f:
-                f.write(deployment["config"].encode("utf-8"))
-            os.chmod("/tmp/heat-agent-script-%d.sh" % i, 0o755)
+            if deployment["group"] == "tgz":
+                os.mkdir("/tmp/heat-agent-%d-tgz" % i)
+                f = StringIO.StringIO(base64.b64decode(deployment["config"]))
+                t = tarfile.open(fileobj=f)
+                t.extractall("/tmp/heat-agent-%d-tgz" % i)
 
-            env = dict(os.environ)
-            for x in deployment["inputs"]:
-                if x["value"] is not None:
-                    env[x["name"]] = str(x["value"])
+                run_script(deployment, "/tmp/heat-agent-%d-tgz/install" % i,
+                           "/tmp/heat-agent-%d-output.log" % i,
+                           "/tmp/heat-agent-%d-tgz" % i)
 
-            p = subprocess.Popen("/tmp/heat-agent-script-%d.sh" % i,
-                                 stdout=subprocess.PIPE,
-                                 stderr=subprocess.STDOUT, cwd="/tmp", env=env)
+            elif deployment["group"] == "script":
+                with open("/tmp/heat-agent-%d-script.sh" % i, "w") as f:
+                    f.write(deployment["config"].encode("utf-8"))
+                os.chmod("/tmp/heat-agent-%d-script.sh" % i, 0o755)
 
-            output = ""
-            with open("/tmp/heat-agent-output-%d.log" % i, "w") as f:
-                while True:
-                    data = p.stdout.read(4096)
-                    if data == "":
-                        break
-
-                    f.write(data)
-                    f.flush()
-                    output += data
-
-            p.wait()
-            deploy_signal(deployment, output, p.returncode)
+                run_script(deployment, "/tmp/heat-agent-%d-script.sh" % i,
+                           "/tmp/heat-agent-%d-output.log" % i, "/tmp")
 
             completed.add(deployment["id"])
 
